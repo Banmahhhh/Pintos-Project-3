@@ -47,8 +47,11 @@ void* frame_allocate_user(void) {
     }
     else {
         // NOT IMPLEMENTED ERROR: NEEDS SWAPPING
-        ASSERT(0);
+        //ASSERT(0);
         // not reached
+        while(kpage == NULL)
+          kpage = frame_evict(PAL_USER);
+        frame_add_to_table(kpage);
         return NULL;
     }
 }
@@ -71,10 +74,11 @@ bool frame_evict (){
     struct list_elem *e;
     lock_acquire(&frame_table_lock);
     //Need lock cause we may have multipule access different processes
-    while (1)
-      for (e = list_begin(&frame_table); e != list_end(&frame_table);e = list_next(e)){
+    while (1) //if all frames are used, choose the first one
+      for (e = list_begin(&frame_table); e != list_end(&frame_table);e = list_next(e))
+      {
           struct frame_entry *fra = list_entry(e, struct_entry, elem); //check each frame structure
-          if(fra->spte->pinned)
+          if(!fra->spte->pinning)
           {
             struct thread* thre = fra->thread;
             //if the page is recently accessed, reset it as not accessed
@@ -88,19 +92,21 @@ bool frame_evict (){
                 if(fra->spte->type == MMAP)
                 {
                   lock_acquire(&filesys_lock);
+                  //write from frame to buffer
                   file_write_at(fra->spte->file, fra->frame, fra->spte->read_bytes, fra->spte->offset);
                   lock_release(&filesys_lock);
                 }
                 lock_release{
                   fra->spte->type = SWAP;
-                  fra->spte->swap_index = swap_out(fte->frame);
+                  //record the swapped frame
+                  fra->spte->swap_index = swap_out(fra->frame);
                 }
               }
-              fra->spte->is_loaded = false;
-              list_remove(&fra->elem);
-              pagedir_clear_page(fra->frame);
-              free(fra);
-              return palloc_get_page(flags);
+              fra->spte->is_loaded = false; //change the is_loaded
+              list_remove(&fra->elem); //remove the frame from frame table
+              pagedir_clear_page(fra->frame); //clean the corresponding page
+              free(fra); //free the frame
+              return palloc_get_page(flags); //the next free page, as one is evicted
             }
           }
       }

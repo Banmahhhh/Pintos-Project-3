@@ -6,6 +6,8 @@
 #include "userprog/gdt.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
+#include "vm/page.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -15,17 +17,14 @@ static void page_fault (struct intr_frame *);
 
 /* Registers handlers for interrupts that can be caused by user
    programs.
-
    In a real Unix-like OS, most of these interrupts would be
    passed along to the user process in the form of signals, as
    described in [SV-386] 3-24 and 3-25, but we don't implement
    signals.  Instead, we'll make them simply kill the user
    process.
-
    Page faults are an exception.  Here they are treated the same
    way as other exceptions, but this will need to change to
    implement virtual memory.
-
    Refer to [IA32-v3a] section 5.15 "Exception and Interrupt
    Reference" for a description of each of these exceptions. */
 void
@@ -114,7 +113,6 @@ kill (struct intr_frame *f)
 /* Page fault handler.  This is a skeleton that must be filled in
    to implement virtual memory.  Some solutions to project 2 may
    also require modifying this code.
-
    At entry, the address that faulted is in CR2 (Control Register
    2) and information about the fault, formatted as described in
    the PF_* macros in exception.h, is in F's error_code member.  The
@@ -129,6 +127,7 @@ page_fault (struct intr_frame *f)
   bool write;        /* True: access was write, false: access was read. */
   bool user;         /* True: access by user, false: access by kernel. */
   void *fault_addr;  /* Fault address. */
+  struct sup_page_table_entry * spte; /*Sup page entry to be used later*/
 
   /* Obtain faulting address, the virtual address that was
      accessed to cause the fault.  It may point to code or to
@@ -151,14 +150,26 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
+  /*Code below is our realization for page fault handler*/
 
-  /* To implement virtual memory, delete the rest of the function
+  if (!fault_addr || !not_present || !is_user_vaddr(fault_addr))
+    exit (-1);
+  /*First check*/
+
+  spte=get_spte(fault_addr);
+  if (spte&&!spte->is_loaded)
+    page_load(spte);
+  else if (!spte && fault_addr >= (f->esp - 32) &&(PHYS_BASE - pg_round_down (fault_addr)) <= MAX_STACK_SIZE)
+    page_grow_stack(fault_addr);
+  else{
+    /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */
-  printf ("Page fault at %p: %s error %s page in %s context.\n",
+    printf ("Page fault at %p: %s error %s page in %s context.\n",
           fault_addr,
           not_present ? "not present" : "rights violation",
           write ? "writing" : "reading",
           user ? "user" : "kernel");
-  kill (f);
+    kill (f);
+  }
 }

@@ -19,7 +19,7 @@ struct sup_page_table_entry {
    	// Whether the physical page is writable or not
    	bool is_loaded;
    	// Indicates whether the entry has been loaded into
-		bool pinned;
+		bool pinning;
 		//buzhidaoshisha
 
    	// For files
