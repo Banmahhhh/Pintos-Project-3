@@ -23,6 +23,6 @@ struct frame_entry {
 };
 
 /* Allocates a new physical frame for current user process. */
-void* frame_allocate_user(void);
+void* frame_allocate_user(struct sup_page_entry *spte);
 
 #endif /* vm/frame.h */

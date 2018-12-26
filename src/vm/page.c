@@ -53,7 +53,7 @@ struct sup_page_table_entry * get_spte (void *uva){
 }
 
 bool page_load_swap (struct sup_page_table_entry * spte){
-		uint8_t *frame = frame_alloc();
+		uint8_t *frame = frame_allocate_user(spte);
 		install_page(spte->uva, frame, spte->writable);
 		swap_in(spte);
 		spte->is_loaded = true;

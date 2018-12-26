@@ -37,11 +37,11 @@ void frame_free (void *frame){
 }
 
 /*Function to allocate the frame, the allocated frame will be added to the frame table*/
-void* frame_allocate_user(void) {
+void* frame_allocate_user(struct sup_page_entry *spte) {
     void *kpage = palloc_get_page(PAL_USER | PAL_ZERO); //kpage is frame
     if(kpage != NULL) {
         // Successfully acquired a frame from user pool
-        frame_add_to_table(kpage);
+        frame_add_to_table(kpage, spte);
         //Add that page to page table
         return kpage;
     }
@@ -51,17 +51,18 @@ void* frame_allocate_user(void) {
         // not reached
         while(kpage == NULL)
           kpage = frame_evict(PAL_USER);
-        frame_add_to_table(kpage);
+        frame_add_to_table(kpage, spte);
         return NULL;
     }
 }
 
 /*Function adding the allocated frame to the frame table*/
-void frame_add_to_table (void *frame){
+void frame_add_to_table (void *frame, struct sup_page_entry *spte){
     struct frame_entry *fte = malloc(sizeof(struct frame_entry));
     fte->frame = frame;
     //Set the address
-    fte->tid = thread_tid();
+    fte->owner = thread_current();
+    fte->spte = spte;
     //Set the tid to be current thread's tid
 
     lock_acquire(&frame_table_lock);
@@ -80,14 +81,14 @@ bool frame_evict (){
           struct frame_entry *fra = list_entry(e, struct_entry, elem); //check each frame structure
           if(!fra->spte->pinning)
           {
-            struct thread* thre = fra->thread;
+            struct thread* thre = fra->owner;
             //if the page is recently accessed, reset it as not accessed
             if(pagedir_is_accessed(thre->pagedir, fra->spte->uva))
-              pagedir_set_accessed(thre->pagedir, fra->spte->uve, false);
+              pagedir_set_accessed(thre->pagedir, fra->spte->uva, false);
             //the frame, least recently used
             else
             {
-              if(pagedir_is_dirty(t->pagedir, fra->spte->uva) || fra->spt->type == SWAP)
+              if(pagedir_is_dirty(thre->pagedir, fra->spte->uva) || fra->spt->type == SWAP)
               {
                 if(fra->spte->type == MMAP)
                 {
@@ -96,7 +97,7 @@ bool frame_evict (){
                   file_write_at(fra->spte->file, fra->frame, fra->spte->read_bytes, fra->spte->offset);
                   lock_release(&filesys_lock);
                 }
-                lock_release{
+                else{
                   fra->spte->type = SWAP;
                   //record the swapped frame
                   fra->spte->swap_index = swap_out(fra->frame);
@@ -104,7 +105,8 @@ bool frame_evict (){
               }
               fra->spte->is_loaded = false; //change the is_loaded
               list_remove(&fra->elem); //remove the frame from frame table
-              pagedir_clear_page(fra->frame); //clean the corresponding page
+              pagedir_clear_page(thre->pagedir, fra->spte->uva); //clean the corresponding page
+              palloc_free_page(fra->frame);
               free(fra); //free the frame
               return palloc_get_page(flags); //the next free page, as one is evicted
             }
