@@ -71,14 +71,14 @@ void frame_add_to_table (void *frame, struct sup_page_entry *spte){
     lock_release(&frame_table_lock);
 }
 /*Function to evict a frame from the list*/
-bool frame_evict (){
+void* frame_evict (enum palloc_flags flags){
     struct list_elem *e;
     lock_acquire(&frame_table_lock);
     //Need lock cause we may have multipule access different processes
     while (1) //if all frames are used, choose the first one
       for (e = list_begin(&frame_table); e != list_end(&frame_table);e = list_next(e))
       {
-          struct frame_entry *fra = list_entry(e, struct_entry, elem); //check each frame structure
+          struct frame_entry *fra = list_entry(e, struct frame_entry, elem); //check each frame structure
           if(!fra->spte->pinning)
           {
             struct thread* thre = fra->owner;
@@ -88,14 +88,14 @@ bool frame_evict (){
             //the frame, least recently used
             else
             {
-              if(pagedir_is_dirty(thre->pagedir, fra->spte->uva) || fra->spt->type == SWAP)
+              if(pagedir_is_dirty(thre->pagedir, fra->spte->uva) || fra->spte->type == SWAP)
               {
                 if(fra->spte->type == MMAP)
                 {
-                  lock_acquire(&filesys_lock);
+                  //lock_acquire(&filesys_lock);
                   //write from frame to buffer
                   file_write_at(fra->spte->file, fra->frame, fra->spte->read_bytes, fra->spte->offset);
-                  lock_release(&filesys_lock);
+                  //lock_release(&filesys_lock);
                 }
                 else{
                   fra->spte->type = SWAP;

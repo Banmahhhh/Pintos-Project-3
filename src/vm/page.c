@@ -96,11 +96,11 @@ bool page_load (void *uva){
  }
 
 
-bool page_allocate_user(void *upage) {
-    void *kpage = frame_allocate_user();
-    if(kpage == NULL) return false;  // Unknown error happened
-    return install_page(upage, kpage, true);
-}
+// bool page_allocate_user(void *upage) {
+//     void *kpage = frame_allocate_user();
+//     if(kpage == NULL) return false;  // Unknown error happened
+//     return install_page(upage, kpage, true);
+// }
 
 /*Function to impelement stack growth when new page is needed (with given uav inside)*/
 bool page_grow_stack (void *uva){
@@ -116,7 +116,7 @@ bool page_grow_stack (void *uva){
   spte->is_loaded = true;
   spte->type = SWAP;
 
-  uint8_t *frame = frame_allocate_user();
+  uint8_t *frame = frame_allocate_user(spte);
   //Allowcate the new frame.
   if (frame==NULL){
       free(spte);
