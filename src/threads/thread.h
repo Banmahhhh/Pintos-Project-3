@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/synch.h"
+#include <hash.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -111,6 +112,12 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+    /*Newly added data structure for VM*/
+    struct hash sup_page_table;
+    /*Every thread should have a hash table for storing the supplementary information for each page entry.
+    The page entry will be stored into the path page.h*/
+
   };
 
 /* If false (default), use round-robin scheduler.

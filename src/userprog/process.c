@@ -90,6 +90,9 @@ start_process (void *args)
   struct thread *parent = arg_struct->parent;
   struct semaphore *chld_sema = arg_struct->chld_sema;
 
+  // Initialize the page table
+  page_table_init(&thread_current()->sup_page_table);
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -205,6 +208,9 @@ process_exit (void)
       cond_signal(&cur->parent->wait_cond, plock);
       lock_release(plock);
   }
+  //Destroy the page table
+  page_table_destroy(&cur->sup_page_table);
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
