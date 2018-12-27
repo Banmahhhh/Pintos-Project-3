@@ -19,8 +19,8 @@ struct sup_page_table_entry {
    	// Whether the physical page is writable or not
    	bool is_loaded;
    	// Indicates whether the entry has been loaded into
-		bool pinning;
-		//buzhidaoshisha
+    bool pinning;
+    //buzhidaoshisha
 
    	// For files
    	struct file *file;
@@ -31,7 +31,7 @@ struct sup_page_table_entry {
    	// How many are valid read bytes
    	size_t zero_bytes;
    	// How many are zero bytes
-
+ 
     // For swap
    	size_t swap_index;
    	/*If the entry is of type swap and the entry has
@@ -41,9 +41,20 @@ struct sup_page_table_entry {
     // The hash element to add to the supplemental
  };
 
+unsigned page_hash_func (const struct hash_elem *e, void *aux UNUSED);
+bool page_hash_less_func (const struct hash_elem *elem1,const struct hash_elem *elem2,void *aux UNUSED);
+void page_hash_action_func (struct hash_elem *e, void *aux UNUSED);
+void page_table_init (struct hash *sup_page_table);
+void page_table_destroy (struct hash *sup_page_table);
+struct sup_page_table_entry * get_spte (void *uva);
+bool page_load_swap (struct sup_page_table_entry * spte);
+bool page_load_mmap (struct sup_page_table_entry * spte);
+bool page_load_file (struct sup_page_table_entry * spte);
+bool page_load (void *uva);
+
 /* Allocates a new virtual page for current user process and install the page
     into the process' page table. */
-bool page_allocate_user(void *upage);
+//bool page_allocate_user(void *upage);
 bool page_grow_stack (void *uva);
 
 #endif /* vm/page.h */

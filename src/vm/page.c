@@ -6,7 +6,7 @@
 #include "vm/frame.h"
 #include "vm/page.h"
 #include <string.h>
-
+ 
 /*Since the sup_page_table will be implemented as a hash table, those three function is needed by the the Pintos specifican*/
 /*Returns a hash of element's data, as a value anywhere in the range of unsigned int.*/
 unsigned page_hash_func (const struct hash_elem *e, void *aux UNUSED){
@@ -53,13 +53,13 @@ struct sup_page_table_entry * get_spte (void *uva){
 }
 
 bool page_load_swap (struct sup_page_table_entry * spte){
-		uint8_t *frame = frame_allocate_user(spte);
-		install_page(spte->uva, frame, spte->writable);
-		swap_in(spte);
-		spte->is_loaded = true;
-   	return false;
+    uint8_t *frame = frame_allocate_user(spte);
+    install_page(spte->uva, frame, spte->writable);
+    swap_in(spte->swap_index, spte->uva);
+    spte->is_loaded = true;
+    return true;
 }
-
+ 
 bool page_load_mmap (struct sup_page_table_entry * spte){
 	//Need impelementation
    	return false;
@@ -74,7 +74,7 @@ bool page_load_file (struct sup_page_table_entry * spte){
 /*Function to load in page using specific functions*/
 bool page_load (void *uva){
     struct sup_page_table_entry * spte = get_spte(uva);
-    //Using uva and get_spte() to acquire the specific spte
+    //Using uva and get_spte() to acquire the specific spet
     if (spte==NULL)
       return false;
     bool success = false;
@@ -111,7 +111,7 @@ bool page_grow_stack (void *uva){
     sizeof(struct sup_page_table_entry));
   if (spte==NULL)
     return false;
-  //Failed to allowcate the sup page entry
+  //Failed to allowcate the sup page entry 
   spte->uva = pg_round_down(uva);
   spte->is_loaded = true;
   spte->type = SWAP;
@@ -129,6 +129,8 @@ bool page_grow_stack (void *uva){
     frame_free(frame);
     return false;
   }
+
+  //if (intr_context)   todo
 
   return (hash_insert(&thread_current()->sup_page_table, &spte->elem) == NULL);
   //If all the process is OK, we will hash insert the new page into current thread's list.

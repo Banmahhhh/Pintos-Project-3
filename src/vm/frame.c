@@ -37,41 +37,42 @@ void frame_free (void *frame){
 }
 
 /*Function to allocate the frame, the allocated frame will be added to the frame table*/
-void* frame_allocate_user(struct sup_page_entry *spte) {
-    void *kpage = palloc_get_page(PAL_USER | PAL_ZERO); //kpage is frame
-    if(kpage != NULL) {
+void* frame_allocate_user(struct sup_page_table_entry *spte) {
+    void *kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+    if(kpage) {
         // Successfully acquired a frame from user pool
         frame_add_to_table(kpage, spte);
-        //Add that page to page table
-        return kpage;
+           
     }
     else {
+        kpage = frame_evict();
+        frame_add_to_table(kpage, spte);
         // NOT IMPLEMENTED ERROR: NEEDS SWAPPING
         //ASSERT(0);
+        //TODO implement swap
         // not reached
-        while(kpage == NULL)
-          kpage = frame_evict(PAL_USER);
-        frame_add_to_table(kpage, spte);
         return NULL;
     }
+    return kpage;
+    //Add that page to page table  
 }
 
 /*Function adding the allocated frame to the frame table*/
-void frame_add_to_table (void *frame, struct sup_page_entry *spte){
+void frame_add_to_table (void *frame, struct sup_page_table_entry *spte){
     struct frame_entry *fte = malloc(sizeof(struct frame_entry));
     fte->frame = frame;
     //Set the address
     fte->owner = thread_current();
     fte->spte = spte;
     //Set the tid to be current thread's tid
-
+ 
     lock_acquire(&frame_table_lock);
     list_push_back(&frame_table, &fte->elem);
     //Add this thread to list
     lock_release(&frame_table_lock);
 }
 /*Function to evict a frame from the list*/
-void* frame_evict (enum palloc_flags flags){
+void* frame_evict (void){
     struct list_elem *e;
     lock_acquire(&frame_table_lock);
     //Need lock cause we may have multipule access different processes
@@ -108,7 +109,7 @@ void* frame_evict (enum palloc_flags flags){
               pagedir_clear_page(thre->pagedir, fra->spte->uva); //clean the corresponding page
               palloc_free_page(fra->frame);
               free(fra); //free the frame
-              return palloc_get_page(flags); //the next free page, as one is evicted
+              return palloc_get_page(PAL_USER); //the next free page, as one is evicted
             }
           }
       }

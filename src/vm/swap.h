@@ -1,4 +1,4 @@
-#ifdef VM_SWAP_H
+#ifndef VM_SWAP_H
 #define VM_SWAP_H
 #include <bitmap.h>
 #include "devices/block.h"
@@ -12,5 +12,5 @@
 
 void swap_init(void);
 size_t swap_out(void *frame);
-void swap_in(struct sup_page_table_entry *spte);
+void swap_in(size_t swap_index, void* uva);
 #endif

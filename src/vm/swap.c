@@ -29,14 +29,14 @@ size_t swap_out(void *frame)
 }
 
 /*swap in, read the content from sectors (block) to frame*/
-void swap_in(struct sup_page_table_entry *spte)
+void swap_in(size_t swap_index, void* uva)
 {
     lock_acquire(&swap_lock);
     int i;
     for(i=0; i<8; i++)
     {
-        block_read(global_swap_block, spte->swap_index*8+i, (uint8_t*)spte->uva+i*BLOCK_SECTOR_SIZE);
+        block_read(global_swap_block, swap_index *8+i, (uint8_t*)uva+i*BLOCK_SECTOR_SIZE);
     }
-    bitmap_flip(swap_map, spte->swap_index);
+    bitmap_flip(swap_map, swap_index);
     lock_release(&swap_lock);
 }
