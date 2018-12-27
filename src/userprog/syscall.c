@@ -12,6 +12,8 @@
 #include "devices/input.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "vm/frame.h"
+#include "vm/page.h"
 
 // #define DEBUG
 
@@ -29,13 +31,43 @@ static struct file_desc* get_fdstruct_from_fd(int fd);
 struct lock file_lock;
 struct lock io_lock;
 
-static bool is_valid_user_vaddr(const void* uvaddr) {
-    if(uvaddr != NULL && uvaddr < PHYS_BASE) {
+static struct sup_page_table_entry* is_valid_user_vaddr(const void* uvaddr, void* esp) {
+    if(uvaddr == NULL || uvaddr >= PHYS_BASE) {
         // not null and below PHYS_BASE
-        void* result = pagedir_get_page(thread_current()->pagedir, uvaddr);
-        if(result != NULL) return true;
+        exit(ERROR);
     }
-    return false;
+    void* result = pagedir_get_page(thread_current()->pagedir, uvaddr);
+    if(result == NULL) exit(ERROR);
+
+    bool load = false;
+
+    struct sup_page_table_entry *spte = get_spte((void *) uvaddr);
+    if(spte)
+    {
+      load_page(spte);
+      load = spte->load;
+    }
+    else if(uvaddr >= esp - 32)
+    {
+      load = page_grow_stack((void*) uvaddr);
+    }
+    if(!load) exit(ERROR);
+    return spte;
+}
+
+void check_buffer(void* buffer, unsigned size, void *esp, bool writable)
+{
+  char* temp_buffer = (char*) buffer;
+  int i;
+  for(i=0; i<(int*)size; i++, temp_buffer++)
+  {
+    struct sup_page_table_entry *spte = is_valid_user_vaddr((const void*)temp_buffer, esp);
+    if(spte && writable)
+    {
+      if(!spte->writable)
+        exit(ERROR);
+    }
+  }
 }
 
 static int fd_alloc(struct file * file) {
@@ -89,10 +121,10 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f)
 {
-    if (!is_valid_user_vaddr(f->esp) ||
-        !is_valid_user_vaddr(f->esp+4) ||
-        !is_valid_user_vaddr(f->esp+8) ||
-        !is_valid_user_vaddr(f->esp+12)) {
+    if (!is_valid_user_vaddr((const void*)f->esp, f->esp) ||
+        !is_valid_user_vaddr((const void*)f->esp+4, f->esp+4) ||
+        !is_valid_user_vaddr((const void*)f->esp+8, f->esp+8) ||
+        !is_valid_user_vaddr((const void*)f->esp+12, f->esp+12)) {
         exit(-1);
         return;
     }
@@ -109,7 +141,7 @@ syscall_handler (struct intr_frame *f)
         case SYS_EXEC: {
             char* cmd_line = DEREF_CHARPTR(f->esp, 1);
             // check if is valid
-            if(is_valid_user_vaddr(cmd_line)) f->eax = exec(cmd_line);
+            if(is_valid_user_vaddr((const void*)cmd_line, f->esp)) f->eax = exec(cmd_line);
             else exit(-1);
             break;
         }
@@ -121,19 +153,19 @@ syscall_handler (struct intr_frame *f)
         case SYS_CREATE: {
             char* file = DEREF_CHARPTR(f->esp, 4);
             unsigned initial_size = DEREF_UNSIGNED(f->esp, 5);
-            if(is_valid_user_vaddr(file)) f->eax = create(file, initial_size);
+            if(is_valid_user_vaddr((const void*)file), f->esp) f->eax = create(file, initial_size);
             else exit(-1);
             break;
         }
         case SYS_REMOVE: {
             char* file = DEREF_CHARPTR(f->esp, 1);
-            if(is_valid_user_vaddr(file)) f->eax = remove(file);
+            if(is_valid_user_vaddr((const void*)file, f->esp)) f->eax = remove(file);
             else exit(-1);
             break;
         }
         case SYS_OPEN: {
             char* file = DEREF_CHARPTR(f->esp, 1);
-            if(is_valid_user_vaddr(file)) f->eax = open(file);
+            if(is_valid_user_vaddr((const void*)file, f->esp)) f->eax = open(file);
             else exit(-1);
             break;
         }
@@ -146,7 +178,7 @@ syscall_handler (struct intr_frame *f)
             int fd = DEREF_INT(f->esp, 5);
             void* buffer = DEREF_BUFFER(f->esp, 6);
             unsigned size = DEREF_UNSIGNED(f->esp, 7);
-            if(is_valid_user_vaddr(buffer)) f->eax = read(fd, buffer, size);
+            if(check_buffer((void*)buffer, (unsigned)size, f->esp, true)) f->eax = read(fd, buffer, size);
             else exit(-1);
             break;
         }
@@ -154,7 +186,7 @@ syscall_handler (struct intr_frame *f)
             int fd = DEREF_INT(f->esp, 5);
             void* buffer = DEREF_BUFFER(f->esp, 6);
             unsigned size = DEREF_UNSIGNED(f->esp, 7);
-            if(is_valid_user_vaddr(buffer)) f->eax = write(fd, buffer, size);
+            if(heck_buffer((void*)buffer, (unsigned)size, f->esp, false)) f->eax = write(fd, buffer, size);
             else exit(-1);
             break;
         }
