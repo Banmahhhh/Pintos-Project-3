@@ -39,7 +39,7 @@ struct sup_page_table_entry {
     struct hash_elem elem;
     // The hash element to add to the supplemental
 	bool no_eviction;
-	//Avoid race condition of eviction and page fault and others
+	//avoid race condition in eviction and page fault and syscall
  };
 
 /* Allocates a new virtual page for current user process and install the page
