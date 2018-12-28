@@ -1,6 +1,7 @@
 #include "userprog/exception.h"
 #include "userprog/process.h"
 #include "userprog/syscall.h"
+#include "userprog/pagedir.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include "userprog/gdt.h"
@@ -8,6 +9,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "vm/page.h"
+
+// #define DEBUG
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -131,7 +134,6 @@ page_fault (struct intr_frame *f)
   bool write;        /* True: access was write, false: access was read. */
   bool user;         /* True: access by user, false: access by kernel. */
   void *fault_addr;  /* Fault address. */
-  struct sup_page_table_entry * spte; /*Sup page entry to be used later*/
 
   /* Obtain faulting address, the virtual address that was
      accessed to cause the fault.  It may point to code or to
@@ -154,26 +156,65 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  /*Code below is our realization for page fault handler*/
+#ifdef DEBUG
+  printf("Page fault detected\n");
+  printf("Fault address: %p\n", fault_addr);
+  printf("Current esp: %p\n", f->esp);
+#endif
 
-  if (!fault_addr || !not_present || !is_user_vaddr(fault_addr))
-    exit (-1);
-  /*First check*/
+  // Virtual memory code
+  // First check
+  if (!fault_addr || !not_present || !is_user_vaddr(fault_addr)) {
+      #ifdef DEBUG
+      printf("Strange things happened at %p\n", fault_addr);
+      printf("Not present? %d, write? %d, user? %d\n", not_present, write, user);
+      #endif
+      exit (-1);
+  }
 
-  spte=get_spte(fault_addr);
-  if (spte&&!spte->is_loaded)
-    page_load(spte);
-  else if (!spte && fault_addr >= (f->esp - 32) &&(PHYS_BASE - pg_round_down (fault_addr)) <= MAX_STACK_SIZE)
-    page_grow_stack(fault_addr);
-  else{
-    /* To implement virtual memory, delete the rest of the function
-     body, and replace it with code that brings in the page to
-     which fault_addr refers. */
-    printf ("Page fault at %p: %s error %s page in %s context.\n",
+
+  // Regardless of whether the address is valid, grow the stack
+  // to the point of esp
+  if(is_user_vaddr(f->esp) && f->esp > PHYS_BASE - MAX_STACK_SIZE) page_grow_to_esp(f->esp);
+  // Check if it is a valid address
+  struct sup_page_table_entry* spte = get_spte(fault_addr);
+  // Has spte, but needs loading
+  if(spte != NULL) {
+      if(!spte->is_loaded) page_load(fault_addr);
+      return;
+  } else {
+      // Do not have spte
+      // Check if growth of stack is needed
+      if (check_valid_stack_growth(fault_addr, f->esp)) {
+          //valid stack growth
+          if(page_grow_stack(fault_addr)) {
+                #ifdef DEBUG
+                printf("Stack growed one page\n");
+                #endif
+          } else {
+                #ifdef DEBUG
+                printf("Failed to grow stack\n");
+                #endif
+          }
+          return;
+      }
+  }
+
+  // fault_addr not valid, kill the process
+  printf ("Page fault at %p: %s error %s page in %s context.\n",
           fault_addr,
           not_present ? "not present" : "rights violation",
           write ? "writing" : "reading",
           user ? "user" : "kernel");
-    kill (f);
-  }
+  kill (f);
+}
+
+bool check_valid_stack_growth(const void* fault_addr, const void* esp) {
+    // printf("in check_valid_stack_growth: fault_addr: %p, esp:%p\n", fault_addr, esp);
+    // printf("PHYS_BASE - pg_round_down(fault_addr) : %p\n", (void*)((void*)PHYS_BASE - (void*)pg_round_down(fault_addr)) );
+    // printf("MAX_STACK_SIZE: %p\n", (void*)MAX_STACK_SIZE);
+    // printf("really? %d\n", ((void*)PHYS_BASE - (void*)pg_round_down(fault_addr)  < (void*)MAX_STACK_SIZE));
+    bool success = fault_addr < PHYS_BASE && esp - fault_addr <= 32 && (void*)PHYS_BASE - (void*)pg_round_down(fault_addr) <= (void*)MAX_STACK_SIZE;
+    // printf("check result: %d\n", success);
+    return success;
 }

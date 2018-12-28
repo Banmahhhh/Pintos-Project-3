@@ -110,14 +110,17 @@ struct thread
     struct file* my_exec;
 #endif
 
-    /* Owned by thread.c. */
-    unsigned magic;                     /* Detects stack overflow. */
-
-    /*Newly added data structure for VM*/
+#ifdef VM
     struct hash sup_page_table;
     /*Every thread should have a hash table for storing the supplementary information for each page entry.
     The page entry will be stored into the path page.h*/
+    void* bottom_of_allocated_stack;
+    int n_mmap;
+    struct list mmap_desc;
+#endif
 
+    /* Owned by thread.c. */
+    unsigned magic;                     /* Detects stack overflow. */
   };
 
 /* If false (default), use round-robin scheduler.

@@ -1,6 +1,7 @@
 #include "userprog/syscall.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
+#include "userprog/exception.h"
 #include <stdio.h>
 #include <syscall-nr.h>
 #include "threads/interrupt.h"
@@ -12,8 +13,8 @@
 #include "devices/input.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
-#include "vm/frame.h"
 #include "vm/page.h"
+
 
 // #define DEBUG
 
@@ -25,49 +26,53 @@
 
 static void syscall_handler (struct intr_frame *);
 static int fd_alloc(struct file * file);
+static int mapid_alloc(struct file * file, void* vaddr, int n_pages);
 static struct file* get_file_from_fd(int fd);
 static struct file_desc* get_fdstruct_from_fd(int fd);
 
 struct lock file_lock;
 struct lock io_lock;
 
-static struct sup_page_table_entry* is_valid_user_vaddr(const void* uvaddr, void* esp) {
-    if(uvaddr == NULL || uvaddr >= PHYS_BASE) {
+static bool is_valid_user_vaddr(const void* uvaddr, void* esp, bool write) {
+    if(uvaddr != NULL && uvaddr < PHYS_BASE) {
         // not null and below PHYS_BASE
-        exit(ERROR);
+        // Grow the stack to esp
+        if(is_user_vaddr(esp) && esp > PHYS_BASE - MAX_STACK_SIZE) page_grow_to_esp(esp);
+        struct sup_page_table_entry* spte = get_spte(uvaddr);
+        if(spte != NULL) {
+            // Deny write to non-writable pages
+            if (write) {
+                if (spte->writable == false) return false;
+            }
+            // Load page if not loaded
+            if(!spte->is_loaded) {
+                page_load(uvaddr);
+            }
+            return true;
+        }
+        else {
+            if (check_valid_stack_growth(uvaddr, esp)) {
+                #ifdef DEBUG
+                printf("grow user stack in kernel context, esp: %p, needed: %p\n",esp, uvaddr);
+                #endif
+                if( page_grow_stack(uvaddr)) {
+                    #ifdef DEBUG
+                    printf("grow successful: %p\n", uvaddr);
+                    #endif
+                    return true;
+                } else{
+                    #ifdef DEBUG
+                    printf("stack growth failed\n");
+                    #endif
+                }
+            } else {
+                #ifdef DEBUG
+                printf("invalid stack growth, uvaddr: %p, esp: %p\n", uvaddr, esp);
+                #endif
+            }
+        }
     }
-    void* result = pagedir_get_page(thread_current()->pagedir, uvaddr);
-    if(result == NULL) exit(ERROR);
-
-    bool load = false;
-
-    struct sup_page_table_entry *spte = get_spte((void *) uvaddr);
-    if(spte)
-    {
-      load_page(spte);
-      load = spte->load;
-    }
-    else if(uvaddr >= esp - 32)
-    {
-      load = page_grow_stack((void*) uvaddr);
-    }
-    if(!load) exit(ERROR);
-    return spte;
-}
-
-void check_buffer(void* buffer, unsigned size, void *esp, bool writable)
-{
-  char* temp_buffer = (char*) buffer;
-  int i;
-  for(i=0; i<(int*)size; i++, temp_buffer++)
-  {
-    struct sup_page_table_entry *spte = is_valid_user_vaddr((const void*)temp_buffer, esp);
-    if(spte && writable)
-    {
-      if(!spte->writable)
-        exit(ERROR);
-    }
-  }
+    return false;
 }
 
 static int fd_alloc(struct file * file) {
@@ -82,12 +87,33 @@ static int fd_alloc(struct file * file) {
     return fd_n;
 }
 
+static int mapid_alloc(struct file * file, void* vaddr, int n_pages) {
+    // create a new file descriptor for current thread
+    struct thread* t = thread_current();
+    int mapid = t->n_mmap++;
+    struct mmap_desc* md = malloc(sizeof(struct mmap_desc));
+    md->file = file;
+    md->mapid = mapid;
+    md->n_pages = n_pages;
+    md->addr = vaddr;
+    list_push_back(&t->mmap_desc, &md->elem);
+    return mapid;
+}
+
 /* deacllocate a CLOSED file descriptor */
 static int fd_dealloc(struct file_desc* target_file) {
     int fd = target_file->fd_number;
     list_remove(&target_file->elem);
     free(target_file);
     return fd;
+}
+
+/* deacllocate a WRITTEN BACK mmao descriptor */
+static int md_dealloc(struct mmap_desc* target_mmap) {
+    int md = target_mmap->mapid;
+    list_remove(&target_mmap->elem);
+    free(target_mmap);
+    return md;
 }
 
 static struct file* get_file_from_fd(int fd) {
@@ -110,6 +136,20 @@ static struct file_desc* get_fdstruct_from_fd(int fd) {
     return NULL;
 }
 
+static struct mmap_desc* get_mdstruct_from_md(int md) {
+    struct thread* t = thread_current();
+    if(md >= t->n_mmap) return NULL;
+    // Loop through list
+    for(struct list_elem* iter = list_begin(&t->mmap_desc);
+        iter != list_end(&t->mmap_desc);
+        iter = list_next(iter)) {
+        //do stuff with iter
+        struct mmap_desc* this_mdstruct = list_entry(iter, struct mmap_desc, elem);
+        if (this_mdstruct->mapid == md) return this_mdstruct;
+    }
+    return NULL;
+}
+
 void
 syscall_init (void)
 {
@@ -121,10 +161,10 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f)
 {
-    if (!is_valid_user_vaddr((const void*)f->esp, f->esp) ||
-        !is_valid_user_vaddr((const void*)f->esp+4, f->esp+4) ||
-        !is_valid_user_vaddr((const void*)f->esp+8, f->esp+8) ||
-        !is_valid_user_vaddr((const void*)f->esp+12, f->esp+12)) {
+    if (!is_valid_user_vaddr(f->esp, f->esp, false) ||
+        !is_valid_user_vaddr(f->esp+4, f->esp, false) ||
+        !is_valid_user_vaddr(f->esp+8, f->esp, false) ||
+        !is_valid_user_vaddr(f->esp+12, f->esp, false)) {
         exit(-1);
         return;
     }
@@ -141,7 +181,7 @@ syscall_handler (struct intr_frame *f)
         case SYS_EXEC: {
             char* cmd_line = DEREF_CHARPTR(f->esp, 1);
             // check if is valid
-            if(is_valid_user_vaddr((const void*)cmd_line, f->esp)) f->eax = exec(cmd_line);
+            if(is_valid_user_vaddr(cmd_line, f->esp, false)) f->eax = exec(cmd_line);
             else exit(-1);
             break;
         }
@@ -153,19 +193,19 @@ syscall_handler (struct intr_frame *f)
         case SYS_CREATE: {
             char* file = DEREF_CHARPTR(f->esp, 4);
             unsigned initial_size = DEREF_UNSIGNED(f->esp, 5);
-            if(is_valid_user_vaddr((const void*)file), f->esp) f->eax = create(file, initial_size);
+            if(is_valid_user_vaddr(file, f->esp, false)) f->eax = create(file, initial_size);
             else exit(-1);
             break;
         }
         case SYS_REMOVE: {
             char* file = DEREF_CHARPTR(f->esp, 1);
-            if(is_valid_user_vaddr((const void*)file, f->esp)) f->eax = remove(file);
+            if(is_valid_user_vaddr(file, f->esp, false)) f->eax = remove(file);
             else exit(-1);
             break;
         }
         case SYS_OPEN: {
             char* file = DEREF_CHARPTR(f->esp, 1);
-            if(is_valid_user_vaddr((const void*)file, f->esp)) f->eax = open(file);
+            if(is_valid_user_vaddr(file, f->esp, false)) f->eax = open(file);
             else exit(-1);
             break;
         }
@@ -178,7 +218,7 @@ syscall_handler (struct intr_frame *f)
             int fd = DEREF_INT(f->esp, 5);
             void* buffer = DEREF_BUFFER(f->esp, 6);
             unsigned size = DEREF_UNSIGNED(f->esp, 7);
-            if(check_buffer((void*)buffer, (unsigned)size, f->esp, true)) f->eax = read(fd, buffer, size);
+            if(is_valid_user_vaddr(buffer, f->esp, true)) f->eax = read(fd, buffer, size);
             else exit(-1);
             break;
         }
@@ -186,7 +226,9 @@ syscall_handler (struct intr_frame *f)
             int fd = DEREF_INT(f->esp, 5);
             void* buffer = DEREF_BUFFER(f->esp, 6);
             unsigned size = DEREF_UNSIGNED(f->esp, 7);
-            if(heck_buffer((void*)buffer, (unsigned)size, f->esp, false)) f->eax = write(fd, buffer, size);
+            if(is_valid_user_vaddr(buffer, f->esp, false))  {
+                f->eax = write(fd, buffer, size);
+            }
             else exit(-1);
             break;
         }
@@ -204,6 +246,18 @@ syscall_handler (struct intr_frame *f)
         case SYS_CLOSE: {
             int fd = DEREF_INT(f->esp, 1);
             close(fd);
+            break;
+        }
+        case SYS_MMAP: {
+            int fd = DEREF_INT(f->esp, 4);
+            void* addr = DEREF_BUFFER(f->esp, 5);
+            //We do not check validity here since addr can be non-stack addresses
+            f->eax = mmap(fd, addr);
+            break;
+        }
+        case SYS_MUNMAP: {
+            int fd = DEREF_INT(f->esp, 1);
+            munmap(fd);
             break;
         }
     }
@@ -240,7 +294,9 @@ bool remove(const char* file) {
 }
 
 int open(const char* file) {
+    lock_acquire(&file_lock);
     struct file *f = filesys_open(file);
+    lock_release(&file_lock);
     if(f != NULL) return fd_alloc(f);
     else return -1;
 }
@@ -337,4 +393,49 @@ void close(int fd) {
     file_close(target_file->file);
     fd_dealloc(target_file);
     lock_release(&file_lock);
+}
+
+int mmap(int fd, void* addr) {
+    // check fd and addr
+    if(fd == 0 || fd == 1 || addr == 0 || addr >= PHYS_BASE) return -1;
+    struct file* f = get_file_from_fd(fd);
+    if (f == NULL) return -1;
+    f = file_reopen(f);
+    if (f == NULL) return -1;
+    // check file size
+    int file_size = file_length(f);
+    if(file_size == 0) return -1;
+    bool multiple_pg_size = file_size % PGSIZE == 0;
+    int n_pages = file_size/PGSIZE + (multiple_pg_size ? 0 : 1);
+    // check validity of addr
+    // page aligned?
+    if(addr != pg_round_down(addr)) return -1;
+    // overlaped?
+    for(void* i=addr;i<addr+n_pages*PGSIZE;i+=PGSIZE) {
+        if (i >= PHYS_BASE) return -1;
+        if(get_spte(i) != NULL) return -1;
+    }
+    // Valid fd and addr. Start mmaping
+    void* i = addr;
+    for(i=addr;i<addr+(n_pages-1)*PGSIZE;i+=PGSIZE) {
+        if(!page_grow_mmap(i, f, i-addr, PGSIZE, 0)) return -1;
+    }
+    int read_bytes = file_size - (file_size/PGSIZE)*PGSIZE;
+    if(!page_grow_mmap(i, f, i-addr, read_bytes, PGSIZE-read_bytes)) return -1;
+    // Successfully mapped, allocate new mapid
+    int mapid = mapid_alloc(f, addr, n_pages);
+    return mapid;
+}
+
+void munmap(int mapid) {
+    struct mmap_desc *md = get_mdstruct_from_md(mapid);
+    if(md == NULL) return;
+    for (void* i = md->addr; i < md->addr+md->n_pages*PGSIZE; i+=PGSIZE) {
+        struct sup_page_table_entry *spte = get_spte(i);
+        mmap_release_page(i, spte->file, spte->offset, spte->read_bytes);
+        //remove spte from supplementary page table
+        page_delete_spte(spte);
+    }
+    file_close(md->file);
+    md_dealloc(md);
 }

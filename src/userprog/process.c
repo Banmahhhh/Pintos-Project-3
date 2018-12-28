@@ -19,6 +19,7 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+#include "vm/page.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (struct arguments *args, void (**eip) (void), void **esp);
@@ -187,6 +188,23 @@ process_exit (void)
           iter = list_next(iter);
           free(this_file);
   }
+
+  #ifdef VM
+    // Unmap all mmap files
+    for(struct list_elem* iter = list_begin(&cur->mmap_desc);
+        iter != list_end(&cur->mmap_desc);) {
+            struct mmap_desc* md = list_entry(iter, struct mmap_desc, elem);
+            for (void* i = md->addr; i < md->addr+md->n_pages*PGSIZE; i+=PGSIZE) {
+                struct sup_page_table_entry *spte = get_spte(i);
+                mmap_release_page(i, spte->file, spte->offset, spte->read_bytes);
+                //remove spte from supplementary page table
+                page_delete_spte(spte);
+            }
+            file_close(md->file);
+            iter = list_next(iter);
+            free(md);
+    }
+  #endif
 
   enum intr_level old_level = intr_disable();
   /* Free chld_stat resources */
@@ -431,7 +449,6 @@ load (struct arguments *args, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-
   return success;
 }
 
@@ -503,7 +520,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0)
     {
       /* Calculate how to fill this page.
@@ -512,30 +528,31 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
-        return false;
+      // /* Get a page of memory. */
+      // uint8_t *kpage = palloc_get_page (PAL_USER);
+      // if (kpage == NULL)
+      //   return false;
+      //
+      // /* Load this page. */
+      // if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
+      //   {
+      //     palloc_free_page (kpage);
+      //     return false;
+      //   }
+      if(!page_grow_file(upage, file, ofs, page_read_bytes, page_zero_bytes, writable)) return false;
 
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false;
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable))
-        {
-          palloc_free_page (kpage);
-          return false;
-        }
+      // /* Add the page to the process's address space. */
+      // if (!install_page (upage, kpage, writable))
+      //   {
+      //     palloc_free_page (kpage);
+      //     return false;
+      //   }
 
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+      ofs += page_read_bytes;
     }
   return true;
 }
@@ -545,91 +562,84 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp, struct arguments * args)
 {
-  uint8_t *kpage;
   bool success = false;
+  success = page_grow_stack(PHYS_BASE-1);
+  thread_current()->bottom_of_allocated_stack = pg_round_down(PHYS_BASE-1);
+  if (success) {
+      *esp = PHYS_BASE;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL)
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success) {
-          *esp = PHYS_BASE;
-
-          /* Writes argument into the stack */
-          /* Delimit arguments and push them onto stack */
-          int argc = 1;
-          // push argstring
-          char* argstring = args->args;
-          int args_len = 0;
-          if (argstring != NULL) {
-            args_len = strlen(argstring);
-            int tailptr = args_len-1;
-            while(argstring[tailptr] == ' ' || argstring[tailptr] == '\n' || argstring[tailptr] == '\r') {
-                argstring[tailptr] = '\0';
-                args_len--;
-                tailptr--;
-            }
-            if(args_len != 0) {
-                argc +=1;
-                for(int i=0; i<args_len; i++) {
-                    if(argstring[i] == ' ') {
-                        argstring[i] = '\0';
-                        argc+=1;
-                        while(i+1 < args_len && argstring[i+1] == ' ') {i++; argstring[i] = '\0';}
-                    }
+      /* Writes argument into the stack */
+      /* Delimit arguments and push them onto stack */
+      int argc = 1;
+      // push argstring
+      char* argstring = args->args;
+      int args_len = 0;
+      if (argstring != NULL) {
+        args_len = strlen(argstring);
+        int tailptr = args_len-1;
+        while(argstring[tailptr] == ' ' || argstring[tailptr] == '\n' || argstring[tailptr] == '\r') {
+            argstring[tailptr] = '\0';
+            args_len--;
+            tailptr--;
+        }
+        if(args_len != 0) {
+            argc +=1;
+            for(int i=0; i<args_len; i++) {
+                if(argstring[i] == ' ') {
+                    argstring[i] = '\0';
+                    argc+=1;
+                    while(i+1 < args_len && argstring[i+1] == ' ') {i++; argstring[i] = '\0';}
                 }
-                *esp -= args_len + 1;
-                memcpy(*esp, argstring, args_len+1);
             }
-          }
-          // push exec_name
-          char* exec_name = args->exec_name;
-          int exec_len = strlen(exec_name);
-          *esp -= exec_len+1;
-          memcpy(*esp, exec_name, exec_len+1);
-          // alignment
-          int total_len = exec_len+1;
-          if(args_len != 0) total_len += args_len +1;
-          int padding_len = 4 - total_len % 4;
-          if(padding_len != 4) {
-              *esp -= padding_len;
-              memset(*esp, 0, padding_len);
-          }
-          char * argstring_end = *esp;
-          // last argv: 0
-          *esp -= 4;
-          memset(*esp, 0, 4);
-          // push pointers of arguments
-          int args_count = 0;
-          // *esp -= argc*4;
-          char* args_ptr = PHYS_BASE - 2;
-          while(args_ptr >= argstring_end-1) {
-              if(*args_ptr == '\0') {
-                  char* string_ptr = args_ptr + 1;
-                  if(strlen(string_ptr)!= 0) {
-                      *esp -= 4;
-                      memcpy(*esp , &string_ptr, sizeof(char *));
-                      args_count ++;
-                      if(args_count == argc) break;
-                  }
-              }
-              args_ptr --;
-          }
-          // push argv
-          *esp -= 4;
-          char* argc_addr = (*esp)+4;
-          memcpy(*esp, &(argc_addr), sizeof(char *));
-          // push argc
-          *esp -= 4;
-          memcpy(*esp, &argc, sizeof(int));
-          // push a NULL return ptr
-          *esp -= 4;
-          memset(*esp, 0, sizeof(char *));
-          // hex_dump(*esp, *esp, 60, true);
+            *esp -= args_len + 1;
+            memcpy(*esp, argstring, args_len+1);
+        }
       }
-      else
-        palloc_free_page (kpage);
-    }
+      // push exec_name
+      char* exec_name = args->exec_name;
+      int exec_len = strlen(exec_name);
+      *esp -= exec_len+1;
+      memcpy(*esp, exec_name, exec_len+1);
+      // alignment
+      int total_len = exec_len+1;
+      if(args_len != 0) total_len += args_len +1;
+      int padding_len = 4 - total_len % 4;
+      if(padding_len != 4) {
+          *esp -= padding_len;
+          memset(*esp, 0, padding_len);
+      }
+      char * argstring_end = *esp;
+      // last argv: 0
+      *esp -= 4;
+      memset(*esp, 0, 4);
+      // push pointers of arguments
+      int args_count = 0;
+      // *esp -= argc*4;
+      char* args_ptr = PHYS_BASE - 2;
+      while(args_ptr >= argstring_end-1) {
+          if(*args_ptr == '\0') {
+              char* string_ptr = args_ptr + 1;
+              if(strlen(string_ptr)!= 0) {
+                  *esp -= 4;
+                  memcpy(*esp , &string_ptr, sizeof(char *));
+                  args_count ++;
+                  if(args_count == argc) break;
+              }
+          }
+          args_ptr --;
+      }
+      // push argv
+      *esp -= 4;
+      char* argc_addr = (*esp)+4;
+      memcpy(*esp, &(argc_addr), sizeof(char *));
+      // push argc
+      *esp -= 4;
+      memcpy(*esp, &argc, sizeof(int));
+      // push a NULL return ptr
+      *esp -= 4;
+      memset(*esp, 0, sizeof(char *));
+      // hex_dump(*esp, *esp, 60, true);
+  }
     return success;
 }
 

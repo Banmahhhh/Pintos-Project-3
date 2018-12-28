@@ -10,6 +10,7 @@ void process_exit (void);
 void process_activate (void);
 
 bool install_page (void *upage, void *kpage, bool writable);
+bool install_page_user (void *upage, void *kpage, bool writable, struct thread *t);
 
 struct arguments {
     char* exec_name;
@@ -22,6 +23,14 @@ struct arguments {
 struct file_desc  {
     int fd_number;
     struct file* file;
+    struct list_elem elem;
+};
+
+struct mmap_desc {
+    int mapid;
+    struct file* file;
+    void* addr;
+    int n_pages;
     struct list_elem elem;
 };
 

@@ -1,0 +1,231 @@
+       	    +---------------------------+
+		    |		ESTR3102            |
+		    | PROJECT 3: VIRTUAL MEMORY	|
+		    |	   DESIGN DOCUMENT	    |
+		    +---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+CHENYU JIANG <1155092088@link.cuhk.edu.hk>
+YUNXIANG LI  <1155092144@link.cuhk.edu.hk>
+JINGJIE NING <1155091998@link.cuhk.edu.hk>
+
+---- PRELIMINARIES ----
+
+>> Which files did you modify for this project?
+
+In path /vm:
+page.c page.h
+frame.c frame.h
+swap.c swap.h
+
+In path /userprog:
+exception.c
+syscall.c
+process.c
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			PAGE TABLE MANAGEMENT
+			=====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for locating the frame,
+>> if any, that contains the data of a given page.
+
+>> A3: How does your code coordinate accessed and dirty bits between
+>> kernel and user virtual addresses that alias a single frame, or
+>> alternatively how do you avoid the issue?
+
+The only access menthod is resricted to uvaddr, no other ways.
+
+---- SYNCHRONIZATION ----
+
+>> A4: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+
+We can make this sure by using one given lock and one newly-added lock.
+
+Acquiring a new frame needs two steps: first we do frame allocation
+through palloc_get_page(). In this function, we make sure that access
+to bitmap, the race condition, is secured by holding pool_lock.
+Secondly, when need to adding the new frame into the frame table (list),
+we create a frame_table_lock in case that there is race condition when
+access the frame table. Only the process holding the frame_table_lock
+is able to access the frame table.
+
+With two locks above, we can avoid race condition when both processes
+need a new frame.
+
+---- RATIONALE ----
+
+>> A5: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+New structures are mainly frame table and supplymentary page table
+and their entries. We implement this by the suggestions of Pintos
+Guide on Piazza.
+
+The frame table is to keep track of all frames allocated through
+calling palloc_get_page(). As written in pintos guide, "The goal
+of this table is to make the process of eviction much more efficient
+by keeping information about frames both readily accessible and
+organized". So when doing eviction or reclamation, the specific
+frame like victim will be much more easy to manage.
+
+The supplymentary page table is add aiming to impelement page
+fault and page freeing as suggested in Pintos guide. When having
+page fault, the handler can access the spte to determine the loading
+source, such as from file or from swap. Second is when having process
+exiting, we need to refer to the spte to determine what will be freed.
+
+
+		       PAGING TO AND FROM DISK
+		       =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+
+>> B4: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in?
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+			 MEMORY MAPPED FILES
+			 ===================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct mmap_desc {
+    int mapid;
+    struct file* file;
+    void* addr;
+    int n_pages;
+    struct list_elem elem;
+};
+
+Description: used for storing information about memory mapped file (similar to file_desc)
+
+---- ALGORITHMS ----
+
+>> C2: Describe how memory mapped files integrate into your virtual
+>> memory subsystem.  Explain how the page fault and eviction
+>> processes differ between swap pages and other pages.
+
+Memory mapped files are loaded using the same scheme as load_segment, since they
+both loads memory content from a file. Their difference is that 1. mmap files can
+be written 2. it is written back to file when it is evicted, when process exits,
+and when munmap is called. When a page fault happends, mmap pages will read page
+content from a opened file, while swap pages will swap back pages from a swap block
+device. When evicting, the content of a mmap page is written back to the file, and
+the content of a swap page is stored in the swap block device.
+
+>> C3: Explain how you determine whether a new file mapping overlaps
+>> any existing segment.
+
+We determined this by checking if every page that will be covered by mmap area do
+not have a supplementary page table entry--which means that they are not used by
+1. other mmap files 2. code segment 3. stack segment, which then means that it is
+free to use.
+
+---- RATIONALE ----
+
+>> C4: Mappings created with "mmap" have similar semantics to those of
+>> data demand-paged from executables, except that "mmap" mappings are
+>> written back to their original files, not to swap.  This implies
+>> that much of their implementation can be shared.  Explain why your
+>> implementation either does or does not share much of the code for
+>> the two situations.
+
+Our implementation shared much of the code for these two situations. Since the
+only difference lies in 1. whether the segment is writable 2. behavior is different
+during eviction--mmap files needs to write the content back, but data segment do not.
+So we used the same function to load these pages when a page fault happens. Since
+they both reads from a file, the data structure needed is also very similar: file
+pointer, offset... Therefore, we shared a lot of code between these two kinds of
+pages, only taking special care when dealing with write-back situations.
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?

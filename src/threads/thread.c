@@ -12,7 +12,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
- #include "vm/frame.h"
+#include "vm/frame.h"
 
 #ifdef USERPROG
 #include "userprog/process.h"
@@ -485,6 +485,10 @@ init_thread (struct thread *t, const char *name, int priority)
   lock_init(&t->wait_lock);
   cond_init(&t->wait_cond);
   t->my_exec = NULL;
+#endif
+#ifdef VM
+  t->n_mmap = 0;
+  list_init(&t->mmap_desc);
 #endif
   list_push_back (&all_list, &t->allelem);
 }

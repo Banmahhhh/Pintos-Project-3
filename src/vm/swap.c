@@ -1,4 +1,6 @@
 #include "vm/swap.h"
+#include <stdio.h>
+
 
 struct block *global_swap_block;
 struct bitmap *swap_map;
