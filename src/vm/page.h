@@ -20,7 +20,6 @@ struct sup_page_table_entry {
    	// Whether the physical page is writable or not
    	bool is_loaded;
    	// Indicates whether the entry has been loaded into
-	bool no_eviction;
 
    	// For files
    	struct file *file;
@@ -39,6 +38,8 @@ struct sup_page_table_entry {
     it has been swapped to on the swap partition*/
     struct hash_elem elem;
     // The hash element to add to the supplemental
+	bool no_eviction;
+	//Avoid race condition of eviction and page fault and others
  };
 
 /* Allocates a new virtual page for current user process and install the page
